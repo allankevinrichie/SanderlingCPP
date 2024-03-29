@@ -19,11 +19,9 @@ find_package(Boost COMPONENTS thread REQUIRED)
 
 # 将源代码添加到此项目的可执行文件。
 add_executable (EVEOnline-Helper "EVEOnline-Helper.cpp" "EVEOnline-Helper.h"
-        ProcessMemoryReader.cpp
         ProcessMemoryReader.h
         EVEOnlineReader.cpp
         EVEOnlineReader.h
-        PythonMemoryReader.cpp
         PythonMemoryReader.h
 )
 #target_link_libraries(EVEOnline-Helper PRIVATE ${LOGURU_INCLUDE_DIRS})

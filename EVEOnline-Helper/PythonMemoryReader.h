@@ -78,50 +78,80 @@ namespace py27 {
 }
 
 
-
 class PythonMemoryReader : public ProcessMemoryReader {
 public:
-    explicit inline PythonMemoryReader(DWORD processId, uint8_t numThreads = 4) : processId(processId), numThreads(numThreads) {
-        hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
-        committedRegions = ProcessMemoryReader::readCommittedRegions(
-                hProcess,
-                ProcessMemoryReader::readCommittedRegions(hProcess, false),
-                numThreads
-        );
-        LOG_S(INFO) << std::format("{} committed regions loaded.", committedRegions->size());
+    explicit PythonMemoryReader(DWORD processId, uint8_t numThreads = 4) :  ProcessMemoryReader(processId, numThreads) {
         EnumerateCandidatesForPythonTypes();
         LOG_S(INFO) << std::format("{} python type types found.", pythonTypes->size());
-        EnumeratePythonBuildinTypeAddresses();
+        EnumeratePythonBuiltinTypeAddresses();
     }
 
-    [[nodiscard]] DWORD getProcessId() const {
-        return processId;
+    ~PythonMemoryReader() {
+
+            delete pythonTypes;
+            delete builtinTypeRegions;
+
     }
 
-    [[nodiscard]] HANDLE getProcessHandle() const {
-        return hProcess;
+    inline bool isPyTypeObject(PVOID nativeObjectAddress) const {
+        auto* pyObjectPtr = (py27::PyObject*)nativeObjectAddress;
+        return pythonTypes->contains(pyObjectPtr->ob_type);
     }
 
-    [[nodiscard]] std::map<PVOID, MemoryRegion*>* getCommittedRegions() const {
-        return committedRegions;
+    inline const string* getPythonTypeObjectName(PVOID nativeObjectAddress) const {
+        if (nativeObjectAddress == nullptr) {
+            return nullptr;
+        }
+        auto* pyObjectPtr = (py27::PyObject*)nativeObjectAddress;
+        auto ob_type = pyObjectPtr->ob_type;
+        if (pythonBuiltinTypesMapping.contains(ob_type)) {
+            return &pythonBuiltinTypesMapping.at(ob_type);
+        }
+        if (isPyTypeObject(nativeObjectAddress)) {
+            auto pyTypeObject = (py27::PyTypeObject*)nativeObjectAddress;
+            return readCachedNullTerminatedAsciiString(pyTypeObject->tp_name, 255);
+        }
+        return nullptr;
     }
 
-    std::unordered_set<PVOID>* EnumerateCandidatesForPythonObjects(
+    inline std::unordered_set<PVOID>* EnumerateCandidatesForPythonObjects(
             const function<bool(uint64_t*)>& ob_type_filter,
             const function<bool(string*)>& tp_name_filter,
             const function<std::map<PVOID, MemoryRegion*>*(std::map<PVOID, MemoryRegion*>*)>& region_filter=[](std::map<PVOID, MemoryRegion*>* regions){return regions;}
-    );
+    ) {
+        boost::asio::io_service ioService;
+        boost::asio::io_service::work work(ioService);
 
-    template<class T> inline T* readCachedMemory(PVOID address) const {
-        return readBytes(address, sizeof(T), committedRegions);
-    }
-
-    template<class T> inline T* readCachedMemory(PVOID address, SIZE_T size) const {
-        return readBytes(address, sizeof(T) * size, committedRegions);
-    }
-
-    inline PVOID readCachedMemory(PVOID address, SIZE_T size) const {
-        return readBytes(address, size, committedRegions);
+        auto committedRegions = region_filter(this->committedRegions);
+        // Create a thread pool
+        std::vector<boost::shared_ptr<boost::thread>> threads;
+        for (int i = 0; i < numThreads; ++i) {
+            boost::shared_ptr<boost::thread> thread(new boost::thread(
+                    [ObjectPtr = &ioService] { return ObjectPtr->run(); }
+            ));
+            threads.push_back(thread);
+        }
+        auto regionList = new std::unordered_set<PVOID>*[committedRegions->size()];
+        for (auto [it, i] = std::tuple{committedRegions->begin(), 0}; it != committedRegions->end(); it++, i++) {
+            auto region = it->second;
+            ioService.post([=, &regionList, this] {
+                auto candidates = EnumerateCandidatesForPythonObjectsInMemoryRegion(region, ob_type_filter, tp_name_filter);
+                regionList[i] = candidates;
+            });
+        }
+        ioService.stop();
+        for (auto &thread: threads) {
+            thread->join();
+        }
+        auto allCandidates = new std::unordered_set<PVOID>();
+        for (auto i = 0; i < committedRegions->size(); i++) {
+            auto regionCandidates = regionList[i];
+            if (regionCandidates == nullptr || regionCandidates->empty()) {
+                continue;
+            }
+            allCandidates->insert_range(*regionCandidates);
+        }
+        return allCandidates;
     }
 
     template<class T> auto readPythonObject(PVOID objectAddress) {
@@ -129,8 +159,8 @@ public:
         if (pyObject == nullptr) {
             return nullptr;
         }
-        if (pythonBuildinTypesMapping.contains(pyObject->ob_type)) {
-            auto typeName = pythonBuildinTypesMapping.at(pyObject->ob_type);
+        if (pythonBuiltinTypesMapping.contains(pyObject->ob_type)) {
+            auto typeName = pythonBuiltinTypesMapping.at(pyObject->ob_type);
         }
         auto PyObjectType = readCachedMemory<py27::PyTypeObject>(pyObject->ob_type);
         auto PyTypeName = getPythonTypeObjectName(PyObjectType);
@@ -172,75 +202,82 @@ public:
         return dict;
     }
 
-
-//    static string ReadPythonStringValue(ulong stringObjectAddress, IMemoryReader memoryReader, int maxLength);
-
 protected:
-    DWORD processId = 0;
-    uint8_t numThreads = 4;
-    HANDLE hProcess = nullptr;
-    std::map<PVOID, MemoryRegion*>* committedRegions = nullptr;
-    std::map<PVOID, MemoryRegion*>* buildinTypeRegions = nullptr;
+    std::map<PVOID, MemoryRegion*>* builtinTypeRegions = nullptr;
     std::unordered_set<PVOID>* pythonTypes = nullptr;
-    std::map<PVOID, string> pythonBuildinTypesMapping = {};
-    static constexpr std::array buildinTypeNames = {"str"sv, "float"sv, "dict"sv, "int"sv, "unicode"sv, "long"sv, "list"sv, "tuple"sv, "bool"sv, "set"sv};
+    std::map<PVOID, string> pythonBuiltinTypesMapping = {};
+    static constexpr std::array builtinTypeNames = {"str"sv, "float"sv, "dict"sv, "int"sv, "unicode"sv, "long"sv, "list"sv, "tuple"sv, "bool"sv, "set"sv};
 
-    inline bool isPyTypeObject(PVOID nativeObjectAddress) const {
-        auto* pyObjectPtr = (py27::PyObject*)nativeObjectAddress;
-        return pythonTypes->contains(pyObjectPtr->ob_type);
-    }
-
-    inline const string* getPythonTypeObjectName(PVOID nativeObjectAddress) const {
-        if (nativeObjectAddress == nullptr) {
+private:
+    inline std::unordered_set<PVOID> * EnumerateCandidatesForPythonTypesInMemoryRegion(MemoryRegion* region) const {
+        if (region == nullptr || region->content.empty()) {
+            // LOG_S(WARNING) << "No committed regions loaded.";
             return nullptr;
         }
-        auto* pyObjectPtr = (py27::PyObject*)nativeObjectAddress;
-        auto ob_type = pyObjectPtr->ob_type;
-        if (pythonBuildinTypesMapping.contains(ob_type)) {
-            return &pythonBuildinTypesMapping.at(ob_type);
-        }
-        if (isPyTypeObject(nativeObjectAddress)) {
-            auto pyTypeObject = (py27::PyTypeObject*)nativeObjectAddress;
-            return readNullTerminatedAsciiString(pyTypeObject->tp_name, committedRegions, 255);
-        }
-        return nullptr;
-    }
+        auto memoryRegionContentAsULongArray = (uint64_t *)region->content.data();
+        auto baseAddress = (uint64_t *) region->baseAddress;
+        auto longLength = region->content.size() / 8;
+        auto candidates = new std::unordered_set<PVOID>();
 
-    std::unordered_set<PVOID>* EnumerateCandidatesForPythonTypes();
-    std::unordered_set<PVOID> * EnumerateCandidatesForPythonTypesInMemoryRegion(MemoryRegion* region) const;
+        for (uint64_t candidateAddressIndex = 0; candidateAddressIndex < longLength - 4; candidateAddressIndex++) {
+            auto candidateAddressInProcess = baseAddress + candidateAddressIndex;
+            auto candidate_ob_type = (uint64_t *) memoryRegionContentAsULongArray[candidateAddressIndex + 1];
+            if (candidate_ob_type != candidateAddressInProcess) {
+                continue;
+            }
+            auto candidate_tp_name = readCachedNullTerminatedAsciiString(
+                    (PVOID) memoryRegionContentAsULongArray[candidateAddressIndex + 3],
+                    16
+            );
+            if (candidate_tp_name == nullptr) {
+                continue;
+            }
+            auto equal = *candidate_tp_name == "type";
+            if (!equal) {
+                continue;
+            }
+            candidates->insert(candidateAddressInProcess);
+        }
+        return candidates;
+    }
 
     inline std::unordered_set<PVOID> * EnumerateCandidatesForPythonObjectsInMemoryRegion(
             MemoryRegion* region,
             const function<bool(uint64_t*)>& ob_type_filter,
             const function<bool(string*)>& tp_name_filter
-    ) const;
-
-    void inline setBuildinTypeRegions(PVOID anyBuildTypeAddr) {
-        if (this -> buildinTypeRegions != nullptr) {
-            return;
+    ) const {
+        if (region == nullptr || region->content.empty()) {
+            //LOG_S(WARNING) << "No committed regions loaded.";
+            return nullptr;
         }
-        auto buildinTypeRegionsFiltered = new std::map<PVOID, MemoryRegion*>;
-        const uint64_t buildinTypeAddrMask = 0xFFFFFFFFFF000000;
-        uint64_t buildinTypeAddrMin = 0;
-        uint64_t buildinTypeAddrMax = 0x7FFFFFFFFF000000;
+        auto memoryRegionContentAsULongArray = (uint64_t *)region->content.data();
+        auto baseAddress = (uint64_t *) region->baseAddress;
+        auto longLength = region->content.size() / 8;
+        auto candidates = new std::unordered_set<PVOID>();
 
-        buildinTypeAddrMin = (uint64_t )anyBuildTypeAddr & buildinTypeAddrMask;
-        buildinTypeAddrMax = buildinTypeAddrMin + ~buildinTypeAddrMask;
-        for (auto &[_, region] : *committedRegions) {
-            if ((uint64_t )region->baseAddress >= buildinTypeAddrMax || (uint64_t )region->baseAddress + region->content.size() <= buildinTypeAddrMin) {
+        for (uint64_t candidateAddressIndex = 0; candidateAddressIndex < longLength - 4; candidateAddressIndex++) {
+            auto candidateAddressInProcess = baseAddress + candidateAddressIndex;
+            auto candidate_ob_type = (uint64_t *) memoryRegionContentAsULongArray[candidateAddressIndex + 1];
+            if (!ob_type_filter(candidate_ob_type)) {
                 continue;
             }
-            buildinTypeRegionsFiltered->insert(std::pair<PVOID, MemoryRegion*>(region->baseAddress, region));
+            auto candidate_tp_name = readCachedNullTerminatedAsciiString(
+                    (PVOID) memoryRegionContentAsULongArray[candidateAddressIndex + 3],
+                    16
+            );
+            if (!tp_name_filter(candidate_tp_name)) {
+                continue;
+            }
+            candidates->insert(candidateAddressInProcess);
         }
-        this -> buildinTypeRegions = buildinTypeRegionsFiltered;
-        LOG_S(INFO) << std::format("buildin type regions located @ 0x{:X} - 0x{:X}", buildinTypeAddrMin, buildinTypeAddrMax);
+        return candidates;
     }
 
-    void EnumeratePythonBuildinTypeAddresses() {
+    void EnumeratePythonBuiltinTypeAddresses() {
         bool allFound = false;
         int tries = 0;
         while (!allFound) {
-            for (auto const &type: buildinTypeNames) {
+            for (auto const &type: builtinTypeNames) {
                 auto candidates = EnumerateCandidatesForPythonObjects(
                         [this](uint64_t* ob_type) {
                             return pythonTypes->contains(ob_type);
@@ -248,24 +285,24 @@ protected:
                         [&](string* tp_name) {
                             return tp_name != nullptr and *tp_name == type;
                         },
-                        [*this](std::map<PVOID, MemoryRegion*>* regions) {
-                            if (buildinTypeRegions != nullptr) {
-                                return buildinTypeRegions;
+                        [this](std::map<PVOID, MemoryRegion*>* regions) {
+                            if (builtinTypeRegions != nullptr) {
+                                return builtinTypeRegions;
                             }
                             return committedRegions;
                         }
                 );
                 if (candidates != nullptr && candidates->size() == 1) {
-                    pythonBuildinTypesMapping[*candidates->begin()] = type;
-                    setBuildinTypeRegions(*candidates->begin());
-                    LOG_S(INFO) << std::format("buildin python type `{}` found @ 0x{:X}", type, (uint64_t)*candidates->begin());
+                    pythonBuiltinTypesMapping[*candidates->begin()] = type;
+                    setBuiltinTypeRegions(*candidates->begin());
+                    LOG_S(INFO) << std::format("builtin python type `{}` found @ 0x{:X}", type, (uint64_t)*candidates->begin());
                 }
             }
-            allFound = pythonBuildinTypesMapping.size() == buildinTypeNames.size();
+            allFound = pythonBuiltinTypesMapping.size() == builtinTypeNames.size();
             if (!allFound) {
                 tries += 1;
                 if (tries > 3) {
-                    LOG_S(ERROR) << "Failed to find all buildin python types.";
+                    LOG_S(ERROR) << "Failed to find all builtin python types.";
                     exit(-1);
                 }
             }
@@ -273,6 +310,85 @@ protected:
 
     }
 
+    inline std::unordered_set<PVOID>* EnumerateCandidatesForPythonTypes() {
+        boost::asio::io_service ioService;
+        boost::asio::io_service::work work(ioService);
+
+        // Create a thread pool
+        std::vector<boost::shared_ptr<boost::thread>> threads;
+        for (int i = 0; i < numThreads; ++i) {
+            boost::shared_ptr<boost::thread> thread(new boost::thread(
+                    [ObjectPtr = &ioService] { return ObjectPtr->run(); }
+            ));
+            threads.push_back(thread);
+        }
+        auto regionList = new std::unordered_set<PVOID>*[committedRegions->size()];
+        for (auto [it, i] = std::tuple{committedRegions->begin(), 0}; it != committedRegions->end(); it++, i++) {
+            auto region = it->second;
+            ioService.post([=, this] {
+                auto candidates = EnumerateCandidatesForPythonTypesInMemoryRegion(region);
+                regionList[i] = candidates;
+            });
+        }
+        ioService.stop();
+        for (auto &thread: threads) {
+            thread->join();
+        }
+        auto allCandidates = new std::unordered_set<PVOID>();
+        for (auto i = 0; i < committedRegions->size(); i++) {
+            auto regionCandidates = regionList[i];
+            if (regionCandidates == nullptr || regionCandidates->empty()) {
+                continue;
+            }
+            allCandidates->insert_range(*regionCandidates);
+        }
+        pythonTypes = allCandidates;
+        return allCandidates;
+    }
+
+    void inline setBuiltinTypeRegions(PVOID anyBuiltinTypeAddr) {
+        if (this -> builtinTypeRegions != nullptr) {
+            return;
+        }
+        auto builtinTypeRegionsFiltered = new std::map<PVOID, MemoryRegion*>;
+        const uint64_t builtinTypeAddrMask = 0xFFFFFFFFFF000000;
+        uint64_t builtinTypeAddrMin = 0;
+        uint64_t builtinTypeAddrMax = 0x7FFFFFFFFF000000;
+
+        builtinTypeAddrMin = (uint64_t )anyBuiltinTypeAddr & builtinTypeAddrMask;
+        builtinTypeAddrMax = builtinTypeAddrMin + ~builtinTypeAddrMask;
+        for (auto &[_, region] : *committedRegions) {
+            if ((uint64_t )region->baseAddress >= builtinTypeAddrMax || (uint64_t )region->baseAddress + region->content.size() <= builtinTypeAddrMin) {
+                continue;
+            }
+            builtinTypeRegionsFiltered->insert(std::pair<PVOID, MemoryRegion*>(region->baseAddress, region));
+        }
+        this -> builtinTypeRegions = builtinTypeRegionsFiltered;
+        LOG_S(INFO) << std::format("builtin type regions located @ 0x{:X} - 0x{:X}", builtinTypeAddrMin, builtinTypeAddrMax);
+    }
 };
+
+//template<class PyType> class ForeignPyType {
+//public:
+//    ForeignPyType(PyType* &foreignObjectAddress, const PythonMemoryReader& reader) : foreignObjectAddress(foreignObjectAddress) {}
+//
+//    inline const string* getPythonTypeObjectName() const {
+//        if (foreignObjectAddress == nullptr) {
+//            return nullptr;
+//        }
+//        auto ob_type = foreignObjectAddress->ob_type;
+//        if (pythonBuiltinTypesMapping.contains(ob_type)) {
+//            return &pythonBuiltinTypesMapping.at(ob_type);
+//        }
+//        if (isPyTypeObject(foreignObjectAddress)) {
+//            auto pyTypeObject = (py27::PyTypeObject*)foreignObjectAddress;
+//            return readCachedNullTerminatedAsciiString(pyTypeObject->tp_name, 255);
+//        }
+//        return nullptr;
+//    }
+//
+//
+//    PyType* foreignObjectAddress;
+//};
 
 #endif //EVEONLINE_HELPER_PYTHONMEMORYREADER_H

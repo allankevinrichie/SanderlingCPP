@@ -34,12 +34,12 @@ public:
     }
 
 
-    std::unordered_set<PVOID>* EnumerateCandidatesForPythonUIRoot() {
+    inline std::unordered_set<PVOID>* EnumerateCandidatesForPythonUIRoot() {
         pythonUIRootTypes = EnumerateCandidatesForPythonObjects(
-                [*this](uint64_t* ob_type) {
+                [this](uint64_t* ob_type) {
                     return pythonTypes->contains(ob_type);
                 },
-                [*this](std::string* tp_name) {
+                [this](std::string* tp_name) {
                     return tp_name != nullptr and *tp_name == "UIRoot";
                 }
         );
@@ -47,15 +47,15 @@ public:
         return pythonUIRootTypes;
     }
 
-    std::unordered_set<PVOID>* EnumerateCandidatesForPythonUIRootObject() {
+    inline std::unordered_set<PVOID>* EnumerateCandidatesForPythonUIRootObject() {
         pythonUIRootObjects = EnumerateCandidatesForPythonObjects(
-                [*this](uint64_t* ob_type) {
+                [this](uint64_t* ob_type) {
                     return pythonUIRootTypes->contains(ob_type);
                 },
                 [](std::string* tp_name) {
                     return true;
                 },
-                [*this](std::map<PVOID, MemoryRegion*>* regions) {
+                [this](std::map<PVOID, MemoryRegion*>* regions) {
                     if (eveObjectRegions != nullptr) {
                         return eveObjectRegions;
                     }
@@ -111,7 +111,7 @@ private:
 
 
 
-    void inline setEVEObjectRegions(PVOID UIRootAddr) {
+    inline void setEVEObjectRegions(PVOID UIRootAddr) {
         if (this -> eveObjectRegions != nullptr) {
             return;
         }

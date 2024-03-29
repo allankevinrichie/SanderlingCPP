@@ -21,7 +21,7 @@
 //        if (!pythonTypes->contains(candidate_ob_type)) {
 //            continue;
 //        }
-//        auto candidate_tp_name = readNullTerminatedAsciiString(
+//        auto candidate_tp_name = readCachedNullTerminatedAsciiString(
 //                (PVOID) memoryRegionContentAsULongArray[candidateAddressIndex + 3],
 //                committedRegions,
 //                16
