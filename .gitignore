@@ -1,0 +1,15 @@
+.vs
+.idea
+.code
+.vscode
+cmake-build*
+out
+*.dll
+*.a
+*.so
+*.dylib
+*.lib
+*.exp
+*.pdb
+*.ilk
+*.idb
