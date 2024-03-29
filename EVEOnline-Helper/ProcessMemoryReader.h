@@ -10,6 +10,7 @@
 #include <winsock2.h>
 #include <windows.h>
 #include <map>
+#include <memory>
 #include <vector>
 #include <loguru.hpp>
 //#include <Python.h>
@@ -34,6 +35,14 @@ struct MemoryRegion {
     std::vector<byte> content;
 };
 
+typedef MemoryRegion MR;
+typedef std::shared_ptr<MR> PMR;
+typedef const PMR &CPMR;
+
+typedef std::map<PVOID, PMR> MMR;
+typedef std::unique_ptr<MMR> PMMR;
+typedef const PMMR &CPMMR;
+
 
 class ProcessMemoryReader {
 public:
@@ -56,12 +65,6 @@ public:
         if (hProcess != nullptr) {
             CloseHandle(hProcess);
         }
-        if (committedRegions != nullptr) {
-            for (auto &[_, region]: *committedRegions) {
-                delete region;
-            }
-            delete committedRegions;
-        }
     }
 
     inline std::vector<byte>* readCachedBytes(PVOID address, SIZE_T length) const {
@@ -73,13 +76,13 @@ public:
         if (ge == committedRegions->begin()) {
             return nullptr;
         }
-        auto region = (--ge)->second;
+        const auto& region = (--ge)->second;
 
         if (region == nullptr) {
             return nullptr;
         }
         int64_t offset = (LPBYTE)address - (LPBYTE)region->baseAddress;
-        if (offset < 0 || length <= 0 || offset >= region->content.size()) {
+        if (offset < 0 || length == 0 || (uint64_t)offset >= region->content.size()) {
             return nullptr;
         }
         return new std::vector<byte>(region->content.begin() + offset, region->content.begin() + min(offset + length, region->content.size()));
@@ -150,12 +153,12 @@ protected:
     DWORD processId = 0;
     uint8_t numThreads = 4;
     HANDLE hProcess = nullptr;
-    std::map<PVOID, MemoryRegion*>* committedRegions = nullptr;
+    PMMR committedRegions = nullptr;
 
 private:
     inline void readCommittedRegionsWoContent() {
         LPCVOID address = nullptr;
-        committedRegions = new std::map<PVOID, MemoryRegion*>();
+        committedRegions = std::make_unique<std::map<PVOID, PMR>>();
         while (true) {
             MEMORY_BASIC_INFORMATION memoryInfo;
             auto result = VirtualQueryEx(hProcess, address, &memoryInfo, sizeof(memoryInfo));
@@ -167,11 +170,11 @@ private:
             if (memoryInfo.State != MEM_COMMIT || memoryInfo.Protect & PAGE_GUARD || memoryInfo.Protect & PAGE_NOACCESS) {
                 continue;
             }
-            committedRegions->insert(std::pair<PVOID, MemoryRegion*>(memoryInfo.BaseAddress, new MemoryRegion(memoryInfo.BaseAddress, memoryInfo.RegionSize)));
+            committedRegions->insert(std::pair<PVOID, PMR>(memoryInfo.BaseAddress, std::make_shared<MR>(memoryInfo.BaseAddress, memoryInfo.RegionSize)));
         }
     }
 
-    static inline void readCommittedRegionContent(const HANDLE &hProcess, MemoryRegion* &region) {
+    static inline void readCommittedRegionContent(const HANDLE &hProcess, CPMR region) {
         SIZE_T bytesRead;
         int tries = 0;
         do {

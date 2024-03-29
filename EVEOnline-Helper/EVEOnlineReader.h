@@ -34,46 +34,41 @@ public:
     }
 
 
-    inline std::unordered_set<PVOID>* EnumerateCandidatesForPythonUIRoot() {
-        pythonUIRootTypes = EnumerateCandidatesForPythonObjects(
+
+    inline void EnumerateCandidatesForPythonUIRoot() {
+        pythonUIRootTypes = std::move(EnumerateCandidatesForPythonObjects(
                 [this](uint64_t* ob_type) {
                     return pythonTypes->contains(ob_type);
                 },
-                [this](std::string* tp_name) {
+                [](std::string* tp_name) {
                     return tp_name != nullptr and *tp_name == "UIRoot";
-                }
-        );
+                },
+                eveObjectRegions
+        ));
         LOG_S(INFO) << std::format("{} python UIRoot Types found.", pythonUIRootTypes->size());
-        return pythonUIRootTypes;
     }
 
-    inline std::unordered_set<PVOID>* EnumerateCandidatesForPythonUIRootObject() {
-        pythonUIRootObjects = EnumerateCandidatesForPythonObjects(
+    inline void EnumerateCandidatesForPythonUIRootObject() {
+        pythonUIRootObjects = std::move(EnumerateCandidatesForPythonObjects(
                 [this](uint64_t* ob_type) {
                     return pythonUIRootTypes->contains(ob_type);
                 },
                 [](std::string* tp_name) {
                     return true;
                 },
-                [this](std::map<PVOID, MemoryRegion*>* regions) {
-                    if (eveObjectRegions != nullptr) {
-                        return eveObjectRegions;
-                    }
-                    return committedRegions;
-                }
-        );
+                eveObjectRegions
+        ));
         LOG_S(INFO) << std::format("{} python UIRoot Objects found.", pythonUIRootObjects->size());
         for (auto addr : *pythonUIRootObjects) {
             LOG_S(INFO) << std::format("0x{:016X}", (uint64_t)addr);
         }
-        return pythonUIRootObjects;
     }
 
 
 private:
-    std::unordered_set<PVOID>* pythonUIRootTypes = nullptr;
-    std::unordered_set<PVOID>* pythonUIRootObjects = nullptr;
-    std::map<PVOID, MemoryRegion*>* eveObjectRegions = nullptr;
+    PUSP pythonUIRootTypes = nullptr;
+    PUSP pythonUIRootObjects = nullptr;
+    PMMR eveObjectRegions = nullptr;
     std::map<PVOID, string> eveTypesMapping = {};
 
     const std::unordered_set<std::string> DictEntriesOfInterestKeys = {
@@ -115,7 +110,7 @@ private:
         if (this -> eveObjectRegions != nullptr) {
             return;
         }
-        auto eveRegionsFiltered = new std::map<PVOID, MemoryRegion*>;
+        auto eveRegionsFiltered = make_unique<MMR>();
         const auto eveTypeAddrMask = 0xFFFFFFFC00000000;
         uint64_t eveObjectAddrMin = 0;
         uint64_t eveObjectAddrMax = 0x7FFFFFFFFF000000;
@@ -126,9 +121,9 @@ private:
             if ((uint64_t )region->baseAddress >= eveObjectAddrMax || (uint64_t )region->baseAddress + region->content.size() <= eveObjectAddrMin) {
                 continue;
             }
-            eveRegionsFiltered->insert(std::pair<PVOID, MemoryRegion*>(region->baseAddress, region));
+            eveRegionsFiltered->insert(std::pair<PVOID, PMR>(region->baseAddress, region));
         }
-        this -> eveObjectRegions = eveRegionsFiltered;
+        this -> eveObjectRegions = std::move(eveRegionsFiltered);
         LOG_S(INFO) << std::format("eve type regions located @ 0x{:X} - 0x{:X}", eveObjectAddrMin, eveObjectAddrMax);
     }
 
