@@ -1,15 +1,8 @@
 ﻿// EVEOnline-Helper.cpp: 定义应用程序的入口点。
 //
 #include "EVEOnline-Helper.h"
-#include <iostream>
-#include <vector>
-#include <chrono>
-#include <map>
-#include <format>
-#include "EVEOnlineReader.h"
 
 using namespace loguru;
-
 
 int main(int argc, char* argv[])
 {
@@ -18,9 +11,9 @@ int main(int argc, char* argv[])
     loguru::g_stderr_verbosity = Verbosity_INFO;
     loguru::g_colorlogtostderr = false;
     loguru::init(argc, argv);
-    DWORD processId = 1776;
+    DWORD processId = 29020;
     std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
-    auto reader = new EVEOnlineReader(processId);
+    auto reader = new eve::EVEOnlineReader(processId, 16);
 //    auto uiRootTypes = reader->EnumerateCandidatesForPythonUIRoot();
 //    auto uiRoot = reader->EnumerateCandidatesForPythonUIRootObject();
 ////    auto addresses = ProcessMemoryReader::getBaseAddresses(hProcess);

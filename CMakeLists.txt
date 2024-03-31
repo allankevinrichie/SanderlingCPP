@@ -15,6 +15,20 @@ endif()
 
 project ("EVEOnline-Helper")
 
+set(Boost_NO_WARN_NEW_VERSIONS 1)
+find_package(Boost COMPONENTS thread REQUIRED)
+
+
+include(FetchContent)
+FetchContent_Declare(LoguruGitRepo
+        GIT_REPOSITORY "https://github.com/emilk/loguru" # can be a filesystem path
+        GIT_TAG        "master"
+)
+# set any loguru compile-time flags before calling MakeAvailable()
+set(LOGURU_WITH_STREAMS TRUE)
+FetchContent_MakeAvailable(LoguruGitRepo) # defines target 'loguru::loguru'
+
 # 包含子项目。
 add_subdirectory ("EVEOnline-Helper")
 add_subdirectory ("PyWrapper")
+add_subdirectory ("Test")
