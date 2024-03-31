@@ -13,7 +13,7 @@ endif()
   set(CMAKE_CXX_STANDARD_LIBRARIES_INIT "kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib comsuppw.lib " )
 #endif()
 
-project ("EVEOnline-Helper")
+project ("libsanderling")
 
 set(Boost_NO_WARN_NEW_VERSIONS 1)
 find_package(Boost COMPONENTS thread REQUIRED)
@@ -29,6 +29,6 @@ set(LOGURU_WITH_STREAMS TRUE)
 FetchContent_MakeAvailable(LoguruGitRepo) # defines target 'loguru::loguru'
 
 # 包含子项目。
-add_subdirectory ("EVEOnline-Helper")
+add_subdirectory ("libsanderling")
 add_subdirectory ("PyWrapper")
 add_subdirectory ("Test")

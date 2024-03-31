@@ -1,4 +1,4 @@
-﻿// EVEOnline-Helper.cpp: 定义应用程序的入口点。
+﻿// libsanderling.cpp: 定义应用程序的入口点。
 //
 #include "EVEOnline-Helper.h"
 

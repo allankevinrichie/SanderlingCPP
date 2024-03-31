@@ -1,4 +1,4 @@
-﻿# CMakeList.txt: EVEOnline-Helper 的 CMake 项目，在此处包括源代码并定义
+﻿# CMakeList.txt: libsanderling 的 CMake 项目，在此处包括源代码并定义
 # 项目特定的逻辑。
 #
 
@@ -27,7 +27,7 @@ add_library(libsanderling_shared SHARED $<TARGET_OBJECTS:objlib>)
 target_link_libraries(libsanderling_shared PRIVATE loguru::loguru Boost::boost Boost::thread)
 add_library(libsanderling_static STATIC $<TARGET_OBJECTS:objlib>)
 
-#target_link_libraries(EVEOnline-Helper PRIVATE ${LOGURU_INCLUDE_DIRS})
+#target_link_libraries(libsanderling PRIVATE ${LOGURU_INCLUDE_DIRS})
 #target_link_libraries(libsanderling_static PRIVATE loguru::loguru Boost::boost Boost::thread)
 
 target_include_directories(libsanderling_shared PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
