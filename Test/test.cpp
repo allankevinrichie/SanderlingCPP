@@ -1,6 +1,6 @@
 ﻿// libsanderling.cpp: 定义应用程序的入口点。
 //
-#include "EVEOnline-Helper.h"
+#include "test.h"
 
 using namespace loguru;
 
