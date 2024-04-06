@@ -117,6 +117,20 @@ namespace eve {
             return static_cast<unique_ptr<T[]>>(readCachedBytes(address, sizeof(T) * size));
         }
 
+        inline unique_ptr<byte[]> readRawBytes(PVOID address, SIZE_T length) const {
+            SIZE_T bytesRead;
+            auto buffer = make_unique<byte[]>(length);
+            int tries = 0;
+            do {
+                ReadProcessMemory(hProcess, address, (LPVOID) buffer.get(), length, &bytesRead);
+                tries += 1;
+            } while (tries <= 3 and bytesRead != length);
+            if (bytesRead != length) {
+                return nullptr;
+            }
+            return buffer;
+        }
+
         inline PBYTES readBytes(PVOID address, SIZE_T length) const {
             SIZE_T bytesRead;
             auto buffer = make_unique<BYTES>(length);
@@ -132,28 +146,30 @@ namespace eve {
         }
 
         inline PSTR readNullTerminatedAsciiString(PVOID address, SIZE_T maxLength = 255) const {
-            auto bytes = readBytes(address, maxLength);
+            auto bytes = readRawBytes(address, maxLength+1);
             if (bytes == nullptr) {
                 return nullptr;
             }
-            auto nullTerminatorIndex = (int64_t) bytes->size();
-            for (auto i = 0; i < bytes->size(); i++) {
-                if (bytes->at(i) == 0) {
+            auto nullTerminatorIndex = maxLength;
+            for (auto i = 0; i < maxLength; i++) {
+                if (bytes[i] == 0) {
                     nullTerminatorIndex = i;
                     break;
                 }
             }
-            return make_unique<std::string>(bytes->begin(), bytes->begin() + nullTerminatorIndex);
+            return make_unique<std::string>(bytes.get(), bytes.get() + nullTerminatorIndex);
         }
 
         template<class T>
-        inline unique_ptr<T> readMemory(PVOID address) const {
-            return static_cast<unique_ptr<T>>(readBytes(address, sizeof(T)));
+        inline unique_ptr<T, std::function<void(T*)>> readMemory(PVOID address) const {
+            auto bytes_array = static_cast<T*>(readRawBytes(address, sizeof(T)).release());
+            return unique_ptr<T, std::function<void(T*)>>(bytes_array, [](void* ptr) {delete[] static_cast<byte*>(ptr);});
         }
 
         template<class T>
-        inline unique_ptr<T[]> readMemory(PVOID address, SIZE_T size) const {
-            return static_cast<unique_ptr<T[]>>(readBytes(address, sizeof(T) * size));
+        inline unique_ptr<T[], std::function<void(T*)>> readMemory(PVOID address, SIZE_T size) const {
+            auto bytes_array = reinterpret_cast<T*>(readRawBytes(address, sizeof(T) * size).release());
+            return unique_ptr<T, std::function<void(T*)>>(bytes_array, [](void* ptr) {delete[] static_cast<byte*>(ptr);});
         }
 
 

@@ -31,7 +31,7 @@ namespace eve {
 
         struct PyTypeObject {
             PyVarObject ob_base;
-            PyObject *tp_name;
+            char *tp_name;
         };
 
         struct PyStrObject {
@@ -82,9 +82,27 @@ namespace eve {
 
         ~PythonMemoryReader() = default;
 
+        template<class PyObject> friend class ForeignPyObject;
+
         inline bool isPyTypeObject(PVOID nativeObjectAddress) const {
             auto *pyObjectPtr = (py27::PyObject *) nativeObjectAddress;
             return pythonTypes->contains(pyObjectPtr->ob_type);
+        }
+
+        inline PSTR getPyObjectTypeName(PVOID foreignObjectAddress) const {
+            if (foreignObjectAddress == nullptr) {
+                return nullptr;
+            }
+            auto pyObjectPtr = readMemory<py27::PyObject>(foreignObjectAddress);
+            auto ob_type = pyObjectPtr->ob_type;
+            if (pythonBuiltinTypesMapping.contains(ob_type)) {
+                return make_unique<STR>(pythonBuiltinTypesMapping.at(ob_type));
+            }
+            if (isPyTypeObject(foreignObjectAddress)) {
+                auto pyTypeObject = (py27::PyTypeObject *) foreignObjectAddress;
+                return readCachedNullTerminatedAsciiString(pyTypeObject->tp_name, 255);
+            }
+            return nullptr;
         }
 
         inline PSTR getPythonTypeObjectName(PVOID nativeObjectAddress) const {
@@ -207,8 +225,10 @@ namespace eve {
         PMMR builtinTypeRegions = nullptr;
         PUSP pythonTypes = nullptr;
         std::map<PVOID, string> pythonBuiltinTypesMapping = {};
+        std::map<PVOID, string> pythonUserDefinedTypesMapping = {};
+        std::shared_mutex pythonUserDefinedTypesMappingMutex;
         static constexpr std::array builtinTypeNames = {"str"sv, "float"sv, "dict"sv, "int"sv, "unicode"sv, "long"sv,
-                                                        "list"sv, "tuple"sv, "bool"sv, "set"sv};
+                                                        "list"sv, "tuple"sv, "bool"sv, "set"sv, "NoneType"sv};
 
     private:
         [[nodiscard]] inline std::unordered_set<PVOID> *
@@ -367,6 +387,85 @@ namespace eve {
             << std::format("builtin type regions located @ 0x{:X} - 0x{:X}", builtinTypeAddrMin, builtinTypeAddrMax);
         }
     };
+
+//    template<class PyObject> class ForeignPyObject {
+//    public:
+//        ForeignPyObject(PyObject* foreignObjectAddress, const PythonMemoryReader& reader) : foreignObjectAddress(foreignObjectAddress), reader(reader){
+//
+//        }
+//        inline bool isAlive() const {
+//            // check
+//        }
+//
+//    private:
+//        string typeName = ""s;
+//        PyObject* foreignObjectAddress;
+//        const PythonMemoryReader& reader;
+//        PyObject nativeObject;
+//        inline bool pyObjectTraverse() {
+//            if (!typeName.empty()) {
+//                return false;
+//            }
+//            auto py_object = reader.readMemory<py27::PyObject>(foreignObjectAddress);
+//            if (py_object == nullptr) {
+//                return false;
+//            }
+//            if (py_object->ob_type == nullptr) {
+//                return false;
+//            }
+//            auto ob_type = py_object->ob_type;
+//            if (reader.pythonBuiltinTypesMapping.contains(ob_type)) {
+//                typeName = reader.pythonBuiltinTypesMapping.at(ob_type);
+//                if (typeName == "str") {
+//                    return pyBuiltinStrTraverse();
+//                } else if (typeName == "float") {
+//                    return pyBuiltinFloatTraverse();
+//                } else if (typeName == "int") {
+//                    return pyBuiltinIntTraverse();
+//                } else if (typeName == "dict") {
+//                    return pyBuiltinDictTraverse();
+//                } else if (typeName == "list") {
+//                    return pyBuiltinListTraverse();
+//                } else if (typeName == "tuple") {
+//                    return pyBuiltinTupleTraverse();
+//                } else if (typeName == "set") {
+//                    return pyBuiltinSetTraverse();
+//                } else if (typeName == "bool") {
+//                    return pyBuiltinBoolTraverse();
+//                } else if (typeName == "unicode") {
+//                    return pyBuiltinUnicodeTraverse();
+//                } else if (typeName == "long") {
+//                    return pyBuiltinLongTraverse();
+//                } else if (typeName == "NoneType") {
+//                    return pyBuiltinNoneTypeTraverse();
+//                }
+//            }
+//            else {
+//                std::shared_lock lock(reader.pythonUserDefinedTypesMappingMutex);
+//                auto type_exists = reader.pythonUserDefinedTypesMapping.contains(ob_type);
+//                auto type_verified = type_exists && !reader.pythonUserDefinedTypesMapping.at(ob_type).empty();
+//
+//                if (reader.pythonUserDefinedTypesMapping.contains(ob_type)) {
+//                    typeName = reader.pythonUserDefinedTypesMapping.at(ob_type);
+//                    return pyUserDefinedObjectTraverse();
+//                }
+//                auto pyTypeObject = reader.readMemory<py27::PyTypeObject>(ob_type);
+//                if (pyTypeObject == nullptr) {
+//                    return false;
+//                }
+//                auto tp_name = reader.readCachedNullTerminatedAsciiString(pyTypeObject->tp_name, 255);
+//                if (tp_name == nullptr) {
+//                    return false;
+//                }
+//                typeName = *tp_name;
+//                {
+//                    std::unique_lock lock(reader.pythonUserDefinedTypesMappingMutex);
+//                    reader.pythonUserDefinedTypesMapping[ob_type] = typeName;
+//                }
+//                return pyUserDefinedObjectTraverse();
+//            }
+//        }
+//    };
 
 
 //template<class PyType> class ForeignPyObject {
